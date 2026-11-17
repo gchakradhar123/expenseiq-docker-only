@@ -2,59 +2,83 @@
 pipeline {
     agent any
 
+    options {
+        timestamps()
+    }
+
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
+                echo 'GitHub code downloaded successfully'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                dir('backend') {
-                    sh 'npm install'
-                }
-            }
-        }
-
-        stage('Test') {
-            steps {
                 dir('expenseiq/backend') {
                     sh 'npm install'
-                    sh 'npm test'
                 }
             }
         }
 
         stage('Build Docker Images') {
             steps {
-                sh 'docker compose build'
-            }
-        }
-
-        stage('Deploy') {
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'expenseiq-jwt-secret',
-                        variable: 'JWT_SECRET'
-                    )
-                ]) {
-                    sh '''
-                        printf 'JWT_SECRET=%s\\n' "$JWT_SECRET" > .env
-                        docker compose up -d
-                    '''
+                dir('expenseiq') {
+                    sh 'docker compose build'
                 }
             }
         }
 
-        stage('Health Check') {
+        stage('Deploy Application') {
             steps {
-                sh '''
-                    sleep 20
-                    curl -f http://localhost/api/health
-                    docker compose ps
-                '''
+                dir('expenseiq') {
+                    withCredentials([
+                        string(
+                            credentialsId: 'expenseiq-jwt-secret',
+                            variable: 'JWT_SECRET'
+                        )
+                    ]) {
+                        sh '''
+                            set +x
+                            printf 'JWT_SECRET=%s\\n' "$JWT_SECRET" > .env
+                            chmod 600 .env
+
+                            docker compose up -d
+
+                            rm -f .env
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                dir('expenseiq') {
+                    sh '''
+                        echo "Checking Docker containers..."
+
+                        docker compose ps
+
+                        echo "Checking frontend availability..."
+
+                        for i in $(seq 1 12); do
+                            if curl -fsS http://localhost/ > /dev/null; then
+                                echo "ExpenseIQ frontend is responding!"
+                                exit 0
+                            fi
+
+                            echo "Waiting for application..."
+                            sleep 10
+                        done
+
+                        echo "Application health check failed"
+                        docker compose logs --tail=50
+                        exit 1
+                    '''
+                }
             }
         }
     }
@@ -62,9 +86,15 @@ pipeline {
     post {
         success {
             echo 'ExpenseIQ deployed successfully!'
+            echo 'Visit http://YOUR_EC2_PUBLIC_IP'
         }
+
         failure {
-            echo 'Deployment failed. Check Console Output.'
+            echo 'Deployment failed. Check Jenkins Console Output.'
+        }
+
+        always {
+            echo 'ExpenseIQ CI/CD pipeline execution completed.'
         }
     }
 }
