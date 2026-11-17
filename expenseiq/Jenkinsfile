@@ -8,6 +8,7 @@ pipeline {
 
     stages {
 
+        // 1. Download source code from GitHub
         stage('Checkout') {
             steps {
                 checkout scm
@@ -15,6 +16,7 @@ pipeline {
             }
         }
 
+        // 2. Install backend dependencies
         stage('Install Dependencies') {
             steps {
                 dir('expenseiq/backend') {
@@ -23,14 +25,30 @@ pipeline {
             }
         }
 
+        // 3. Build Docker images
         stage('Build Docker Images') {
             steps {
                 dir('expenseiq') {
-                    sh 'docker compose build'
+                    withCredentials([
+                        string(
+                            credentialsId: 'expenseiq-jwt-secret',
+                            variable: 'JWT_SECRET'
+                        )
+                    ]) {
+                        sh '''
+                            set +x
+
+                            printf 'JWT_SECRET=%s\\n' "$JWT_SECRET" > .env
+                            chmod 600 .env
+
+                            docker compose build
+                        '''
+                    }
                 }
             }
         }
 
+        // 4. Deploy application containers
         stage('Deploy Application') {
             steps {
                 dir('expenseiq') {
@@ -42,6 +60,7 @@ pipeline {
                     ]) {
                         sh '''
                             set +x
+
                             printf 'JWT_SECRET=%s\\n' "$JWT_SECRET" > .env
                             chmod 600 .env
 
@@ -54,6 +73,7 @@ pipeline {
             }
         }
 
+        // 5. Verify application deployment
         stage('Verify Deployment') {
             steps {
                 dir('expenseiq') {
@@ -62,7 +82,7 @@ pipeline {
 
                         docker compose ps
 
-                        echo "Checking frontend availability..."
+                        echo "Checking ExpenseIQ frontend..."
 
                         for i in $(seq 1 12); do
                             if curl -fsS http://localhost/ > /dev/null; then
@@ -75,7 +95,9 @@ pipeline {
                         done
 
                         echo "Application health check failed"
+
                         docker compose logs --tail=50
+
                         exit 1
                     '''
                 }
@@ -86,7 +108,7 @@ pipeline {
     post {
         success {
             echo 'ExpenseIQ deployed successfully!'
-            echo 'Visit http://YOUR_EC2_PUBLIC_IP'
+            echo 'Access your application using your EC2 public IP.'
         }
 
         failure {
