@@ -19,7 +19,8 @@ pipeline {
 
         stage('Test') {
             steps {
-                dir('backend') {
+                dir('expenseiq/backend') {
+                    sh 'npm install'
                     sh 'npm test'
                 }
             }
